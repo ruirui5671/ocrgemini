@@ -16,20 +16,19 @@ st.set_page_config(
 )
 
 # --- 应用标题和说明 ---
-st.title("🚦 Gemini 智能订单诊断工具 V4.2 (自动批处理版)")
+st.title("🚦 Gemini 智能订单诊断工具 V4.3 (交互式编辑版)")
 st.markdown("""
-欢迎使用！本版本已升级为 **全自动批处理** 模式。
-- **任务队列**：上传的所有图片将进入一个“待处理”队列。
-- **自动处理**：点击“开始批量处理”，应用将自动逐一识别队列中的所有图片，无需手动干预。
-- **实时进度**：处理过程中，您可以实时看到队列状态的变化。
-- **随时可停**：如果需要，可以随时点击“停止处理”来中断任务。
+欢迎使用！本版本重大升级，现已支持 **图表对照** 与 **交互式编辑**！
+- **图表对照**：在每个识别结果旁直接显示原始图片，核对一目了然。
+- **独立编辑**：您可以直接在每个订单的结果表格中修改识别错误的数据。
+- **数据联动**：您在上方任何表格中所做的修改，都会 **立即自动同步** 到下方的汇总总表及最终的Excel导出文件中。
+- **全自动处理**：依然保留V4.2的全自动批处理能力。
 """)
 
 # --- 会话状态 (Session State) 初始化 ---
 if "file_list" not in st.session_state: st.session_state.file_list = []
 if "results" not in st.session_state: st.session_state.results = {}
 if "processed_ids" not in st.session_state: st.session_state.processed_ids = []
-# ✅ 核心修改 1: 新增一个状态来控制是否处于自动处理模式
 if "processing_active" not in st.session_state: st.session_state.processing_active = False
 
 # --- 安全设置 ---
@@ -70,13 +69,10 @@ def clean_and_convert_to_numeric(value):
         except (ValueError, IndexError): return np.nan
     return np.nan
 
-# --- 文件上传与队列管理 ---
+# --- 文件上传与队列管理 (保持不变) ---
 st.header("STEP 1: 上传所有订单图片")
 uploaded_files = st.file_uploader("请在此处上传一张或多张图片", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
-
-# 只有在有新文件上传时，才重置队列状态并取消正在进行的处理
 if uploaded_files:
-    # 比较新旧文件列表，如果不同则更新
     new_file_ids = {f.file_id for f in uploaded_files}
     old_file_ids = {f.file_id for f in st.session_state.file_list}
     if new_file_ids != old_file_ids:
@@ -85,10 +81,9 @@ if uploaded_files:
         st.session_state.processed_ids = []
         st.session_state.processing_active = False
         st.info("检测到新的文件列表，已重置处理队列。")
-        st.rerun() # 强制刷新以显示最新状态
+        st.rerun()
 
-
-# --- 队列处理控制中心 ---
+# --- 队列处理控制中心 (保持不变) ---
 if st.session_state.file_list:
     files_to_process = [f for f in st.session_state.file_list if f.file_id not in st.session_state.processed_ids]
     total_count = len(st.session_state.file_list)
@@ -96,46 +91,33 @@ if st.session_state.file_list:
     processed_count = total_count - remaining_count
 
     st.header("STEP 2: 自动处理识别任务")
-    
-    # 显示进度条
-    st.progress(processed_count / total_count if total_count > 0 else 0,
-                text=f"处理进度：{processed_count} / {total_count}")
+    st.progress(processed_count / total_count if total_count > 0 else 0, text=f"处理进度：{processed_count} / {total_count}")
 
-    # ✅ 核心修改 2: 替换掉原来的单一按钮，使用开始/停止按钮来控制自动处理流程
     col1, col2 = st.columns(2)
     with col1:
-        # 只有在未开始且有待处理文件时，才显示“开始”按钮
         if not st.session_state.processing_active and files_to_process:
             if st.button("🚀 开始批量处理", use_container_width=True, type="primary"):
                 st.session_state.processing_active = True
-                st.rerun() # 点击后立即重新运行以启动处理循环
-
+                st.rerun()
     with col2:
-        # 只有在处理进行中时，才显示“停止”按钮
         if st.session_state.processing_active:
             if st.button("⏹️ 停止处理", use_container_width=True):
                 st.session_state.processing_active = False
                 st.warning("处理已手动停止。")
-                st.rerun() # 重新运行以更新UI状态
+                st.rerun()
 
-    # ✅ 核心修改 3: 自动处理循环的主体逻辑
-    # 当“自动处理”开关打开，并且还有文件待处理时，执行此块
     if st.session_state.processing_active and files_to_process:
         next_file_to_process = files_to_process[0]
-        
         with st.spinner(f"正在识别 {next_file_to_process.name}... (队列剩余 {remaining_count-1} 张)"):
             try:
                 file_id = next_file_to_process.file_id
                 image = Image.open(next_file_to_process).convert("RGB")
-                
                 response = model.generate_content([PROMPT_TEMPLATE, image])
-                
                 if not response.text or not response.text.strip():
                     raise ValueError("模型返回了空内容。可能是图片质量问题或安全策略触发。")
 
                 cleaned_text = response.text.strip().removeprefix("```json").removesuffix("```").strip()
                 data = json.loads(cleaned_text)
-                
                 df = pd.DataFrame.from_records(data)
                 df.rename(columns={"数量": "识别数量", "单价": "识别单价", "总价": "识别总价"}, inplace=True)
                 
@@ -155,69 +137,93 @@ if st.session_state.file_list:
                 final_cols = ["品名", "识别数量", "识别单价", "识别总价", "计算总价", "[按总价]推算数量", "[按总价]推算单价", "状态"]
                 st.session_state.results[file_id] = df[final_cols]
                 st.session_state.processed_ids.append(file_id)
-
             except Exception as e:
                 st.error(f"处理 {next_file_to_process.name} 时出错: {e}")
                 st.session_state.processed_ids.append(next_file_to_process.file_id)
                 st.session_state.results[next_file_to_process.file_id] = pd.DataFrame([{"品名": f"识别失败", "状态": "❌ 错误"}])
-            
-            # 无论成功还是失败，都立即重新运行脚本以处理下一个文件
             st.rerun()
 
-    # 当队列处理完成时，显示最终信息
     if not files_to_process and total_count > 0:
         if st.session_state.processing_active:
-            # 如果是从处理状态刚刚完成，则关闭开关并显示成功信息
             st.session_state.processing_active = False
             st.success("🎉 所有图片均已自动处理完毕！")
             st.balloons()
-            st.rerun() # 最后一次刷新以隐藏“停止”按钮
+            st.rerun()
         else:
-            # 如果是页面加载时就已经处理完了，只显示提示
             st.info("所有图片均已处理。请在下方查看、编辑和导出结果。")
 
 
-# --- 结果展示与导出 (这部分无需修改) ---
-st.header("STEP 3: 查看、编辑与导出结果")
+# --- ✅ 核心修改区域: 结果展示与导出 ---
+st.header("STEP 3: 对照图片，编辑结果")
 
 if not st.session_state.results:
     st.info("尚未处理任何图片。请先上传并开始处理。")
 else:
-    # 展开所有已处理的结果
+    # 遍历所有已处理的文件，为每个文件创建一个可编辑的区域
     for file in st.session_state.file_list:
         if file.file_id in st.session_state.results:
-            with st.expander(f"📄 订单：{file.name} (已处理)", expanded=True):
-                st.dataframe(st.session_state.results[file.file_id], use_container_width=True)
+            st.markdown("---")
+            st.subheader(f"📄 订单：{file.name}")
+            
+            # 创建左右两栏，左边放图，右边放可编辑表格
+            col_img, col_editor = st.columns([1, 2])
 
-    # 汇总所有可用的DataFrame用于编辑和导出
+            with col_img:
+                st.image(file, caption="原始订单图片", use_column_width=True)
+
+            with col_editor:
+                # 获取当前文件的DataFrame
+                current_df = st.session_state.results[file.file_id]
+                
+                # 使用st.data_editor使其可编辑
+                # 关键点1：使用唯一的key，防止Streamlit混淆不同的编辑器
+                # 关键点2：将编辑器的输出（用户修改后的DataFrame）捕获到edited_df
+                edited_df = st.data_editor(
+                    current_df,
+                    key=f"editor_{file.file_id}",
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    # 禁用自动计算的列，只允许修改原始识别数据
+                    disabled=["计算总价", "[按总价]推算数量", "[按总价]推算单价", "状态"]
+                )
+
+                # 关键点3：将用户修改后的DataFrame立即写回session_state
+                # 这使得所有后续操作（如下方的汇总表）都能获取到最新的数据
+                st.session_state.results[file.file_id] = edited_df
+
+    # --- 汇总预览与导出 ---
+    st.markdown("---")
+    st.header("STEP 4: 预览汇总结果并导出")
+
+    # 从session_state中收集所有（可能已被编辑过的）DataFrame
     all_dfs = [df for df in st.session_state.results.values() if isinstance(df, pd.DataFrame) and '识别数量' in df.columns]
+    
     if all_dfs:
-        st.subheader("统一编辑区")
-        # 将所有成功的识别结果合并到一个可编辑的表格中
+        st.subheader("统一结果预览区 (根据您的修改实时更新)")
+        
+        # 将所有最新的DataFrame合并成一个总表
+        # 因为上方已经将编辑后的数据写回session_state，这里自然能拿到最新数据
         merged_df = pd.concat(all_dfs, ignore_index=True)
-        edited_df = st.data_editor(
-            merged_df,
-            num_rows="dynamic",
-            use_container_width=True,
-            height=300,
-            disabled=["计算总价", "[按总价]推算数量", "[按总价]推算单价", "状态"]
-        )
+        
+        # 这里使用st.dataframe进行只读预览，因为编辑操作已在上方完成
+        st.dataframe(merged_df, use_container_width=True, height=300)
         
         st.subheader("导出为 Excel 文件")
         output = io.BytesIO()
+        # 使用最新的merged_df来生成Excel
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            edited_df.to_excel(writer, index=False, sheet_name='诊断结果')
-            # 自动调整列宽
-            for column in edited_df:
-                column_length = max(edited_df[column].astype(str).map(len).max(), len(column))
-                col_idx = edited_df.columns.get_loc(column)
-                writer.sheets['诊断结果'].set_column(col_idx, col_idx, column_length + 2)
+            merged_df.to_excel(writer, index=False, sheet_name='诊断结果')
+            worksheet = writer.sheets['诊断结果']
+            for i, col in enumerate(merged_df.columns):
+                column_len = max(merged_df[col].astype(str).map(len).max(), len(col)) + 2
+                worksheet.set_column(i, i, column_len)
+
         excel_data = output.getvalue()
         now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         file_name = f"订单诊断结果_{now}.xlsx"
         
         st.download_button(
-            label="✅ 点击下载【诊断后】的Excel",
+            label="✅ 点击下载【最终修正后】的Excel",
             data=excel_data,
             file_name=file_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
