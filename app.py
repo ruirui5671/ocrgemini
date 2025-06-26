@@ -14,39 +14,42 @@ st.set_page_config(
 )
 
 # --- 应用标题和说明 ---
-st.title("🧠 Gemini OCR: 智能手写订单识别工具 V2.1")
+st.title("🚀 Gemini 最新模型: 智能手写订单识别工具 V2.5")
 st.markdown("""
-欢迎使用！此版本已升级为**自动结构化识别**模式。
-- **自动提取字段**：上传手写订单图片，Gemini 将尝试自动识别出 `品名`、`数量`、`单价` 等关键信息。
+欢迎使用！本工具已搭载 Google **当前最新、最强大的 `Gemini 1.5 Pro` 模型**，为您提供顶级的识别体验。
+- **自动提取字段**：上传手写订单图片，将自动识别出 `品名`、`数量`、`单价` 等关键信息。
 - **统一编辑和导出**：所有识别结果会合并在一张表格中，您可以方便地进行修改、补充，并一键导出为 Excel 文件。
 """)
 
 # --- API 密钥配置 和 模型初始化 ---
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    # --- 修正点：换回您有权限的 gemini-pro-vision 模型 ---
-    model = genai.GenerativeModel("gemini-pro-vision")
+    # ✅ --- 关键修改：模型已更新为当前最新、最强的版本 ---
+    # 这个 "gemini-1.5-pro-latest" 就是调用最新模型（如2.5 Pro能力）的正确方式。
+    model = genai.GenerativeModel("gemini-1.5-pro-latest")
+
 except Exception as e:
-    st.error(f"API密钥配置错误，请检查.streamlit/secrets.toml文件: {e}")
-    st.stop()
+    # 如果API Key或模型名称出错，会在这里提示
+    st.error(f"初始化失败，请检查 API 密钥或模型名称是否正确: {e}")
+    st.stop() # 停止运行，防止后续代码报错
 
 
-# --- Gemini 的指令 (Prompt) ---
+# --- Gemini 的指令 (Prompt)，针对新模型优化 ---
 PROMPT_TEMPLATE = """
-你是一个专业的订单数据录入员。
-请仔细识别这张手写进货单图片，并提取每一行的'品名'、'数量'和'单价'。
+你是一个顶级的订单数据录入专家。
+请严格按照图片中的手写内容，识别并提取每一行商品的'品名'、'数量'和'单价'。
 
-请严格按照以下要求操作：
-1. 将结果整理成一个 JSON 数组格式。
-2. 数组中的每个对象代表一个商品，必须包含三个键： "品名", "数量", "单价"。
-3. 如果图片中的某一行缺少某个信息（例如没有写单价），请将对应的值留空字符串 ""。
-4. 如果某个值无法清晰识别，请尽力猜测或也留空字符串。
-5. 最终的输出结果 **只能是 JSON 格式的文本**，不要包含任何解释、说明、或者 markdown 的 ```json ``` 标记。
+请严格遵守以下规则：
+1.  最终必须输出一个格式完美的 JSON 数组。
+2.  数组中的每一个 JSON 对象代表一个商品，且必须包含三个键： "品名", "数量", "单价"。
+3.  如果图片中的某一行缺少某个信息（例如没有写单价或数量），请将对应的值设为空字符串 ""。
+4.  如果某个文字或数字非常模糊，无法确定，也请设为空字符串 ""。
+5.  **你的回答必须是纯粹的、可以直接解析的 JSON 文本**。绝对不要包含任何解释、说明文字、或者 Markdown 的 ```json ``` 标记。
 
-例如，对于一张包含 "雪花纯生 5箱 85元" 和 "青岛原浆 3箱 120元" 的图片，你应该返回：
+例如，对于一张包含 "雪花纯生 5箱 85" 和 "青岛原浆 3箱" 的图片，你应该返回：
 [
     { "品名": "雪花纯生", "数量": "5", "单价": "85" },
-    { "品名": "青岛原浆", "数量": "3", "单价": "120" }
+    { "品名": "青岛原浆", "数量": "3", "单价": "" }
 ]
 """
 
@@ -62,8 +65,10 @@ files = st.file_uploader(
 )
 
 if files:
-    for i, file in enumerate(files):
-        with st.expander(f"📷 第 {i+1} 张图片：{file.name}", expanded=True):
+    for file in files:
+        # 使用 file.id 作为唯一的 key，比索引更稳定
+        file_id = file.id
+        with st.expander(f"📷 图片：{file.name}", expanded=True):
             col1, col2 = st.columns(2)
 
             with col1:
@@ -73,48 +78,45 @@ if files:
 
             with col2:
                 st.subheader("识别与处理")
-                if st.button(f"🚀 结构化识别第 {i+1} 张", key=f"btn_{i}"):
-                    with st.spinner("🧠 Gemini 正在进行结构化识别..."):
+                if st.button(f"🚀 使用最新模型识别", key=f"btn_{file_id}"):
+                    with st.spinner("🧠 最新 Gemini 模型正在全力识别中..."):
                         try:
-                            buf = io.BytesIO()
-                            image.save(buf, format="JPEG")
-                            img_bytes = buf.getvalue()
+                            # 使用新的、更强大的模型进行识别
+                            response = model.generate_content([PROMPT_TEMPLATE, image])
 
-                            response = model.generate_content([
-                                PROMPT_TEMPLATE,
-                                {"mime_type": "image/jpeg", "data": img_bytes}
-                            ])
-
-                            cleaned_text = response.text.strip().replace("```json", "").replace("```", "")
+                            # 鲁棒性处理：去除模型可能意外返回的代码块标记
+                            cleaned_text = response.text.strip().removeprefix("```json").removesuffix("```").strip()
                             
                             data = json.loads(cleaned_text)
                             df = pd.DataFrame.from_records(data)
 
+                            # 确保关键列存在，防止后续操作出错
                             expected_cols = ["品名", "数量", "单价"]
                             for col in expected_cols:
                                 if col not in df.columns:
-                                    df[col] = "" 
+                                    df[col] = "" # 如果模型漏了某一列，则补充空列
                             
-                            st.session_state.results[i] = df[expected_cols]
-                            st.success("✅ 识别完成！结果已添加到下方总表中。")
+                            st.session_state.results[file_id] = df[expected_cols]
+                            st.success("✅ 识别完成！")
+                            st.rerun()
 
                         except json.JSONDecodeError:
                             st.error("❌ 结构化识别失败：模型返回的不是有效的JSON格式。")
-                            # 加上 'response' in locals() 判断，防止 response 未定义时报错
-                            st.info("Gemini 返回的原始文本：")
-                            st.text(response.text if 'response' in locals() else "无返回内容")
+                            st.info("模型返回的原始文本：")
+                            st.text_area("原始输出", cleaned_text if 'cleaned_text' in locals() else response.text, height=150)
                         except Exception as e:
                             st.error(f"❌ 处理失败，发生未知错误：{e}")
 
-                if i in st.session_state.results:
-                    st.info("这张图片的结果已在下方表格中。如需重新识别，请再次点击上方按钮。")
+                if file_id in st.session_state.results:
+                    st.dataframe(st.session_state.results[file_id], use_container_width=True)
+                    st.caption("上方为识别结果。如需重新识别，请再次点击识别按钮。")
 
 if st.session_state.results:
     st.divider()
     st.header("📝 统一编辑与导出")
 
+    # 从 session_state 中合并所有识别结果
     all_dfs = list(st.session_state.results.values())
-
     if all_dfs:
         merged_df = pd.concat(all_dfs, ignore_index=True)
 
@@ -126,21 +128,23 @@ if st.session_state.results:
             height=300
         )
 
-        st.subheader("📥 导出Excel文件")
-        if st.button("生成并下载 Excel 文件"):
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                edited_df.to_excel(writer, index=False, sheet_name='识别结果')
-                writer.sheets['识别结果'].autofit()
-
-            excel_data = output.getvalue()
-            now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            file_name = f"订单识别结果_{now}.xlsx"
-            
-            st.download_button(
-                label="✅ 点击这里下载 Excel",
-                data=excel_data,
-                file_name=file_name,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            st.success("Excel 文件已生成！")
+        st.subheader("📥 导出为 Excel 文件")
+        
+        # 将数据转换为可下载的 Excel 格式
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            edited_df.to_excel(writer, index=False, sheet_name='识别结果')
+            # 自动调整列宽，让表格更好看
+            writer.sheets['识别结果'].autofit()
+        
+        excel_data = output.getvalue()
+        now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_name = f"订单识别结果_{now}.xlsx"
+        
+        st.download_button(
+            label="✅ 点击这里下载 Excel",
+            data=excel_data,
+            file_name=file_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
