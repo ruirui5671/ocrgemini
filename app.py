@@ -14,7 +14,7 @@ st.set_page_config(
 )
 
 # --- 应用标题和说明 ---
-st.title("🚀 Gemini 最新模型: 智能手写订单识别工具 V2.5")
+st.title("🚀 Gemini 最新模型: 智能手写订单识别工具 V2.6")
 st.markdown("""
 欢迎使用！本工具已搭载 Google **当前最新、最强大的 `Gemini 1.5 Pro` 模型**，为您提供顶级的识别体验。
 - **自动提取字段**：上传手写订单图片，将自动识别出 `品名`、`数量`、`单价` 等关键信息。
@@ -24,14 +24,10 @@ st.markdown("""
 # --- API 密钥配置 和 模型初始化 ---
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    # ✅ --- 关键修改：模型已更新为当前最新、最强的版本 ---
-    # 这个 "gemini-1.5-pro-latest" 就是调用最新模型（如2.5 Pro能力）的正确方式。
     model = genai.GenerativeModel("gemini-1.5-pro-latest")
-
 except Exception as e:
-    # 如果API Key或模型名称出错，会在这里提示
     st.error(f"初始化失败，请检查 API 密钥或模型名称是否正确: {e}")
-    st.stop() # 停止运行，防止后续代码报错
+    st.stop()
 
 
 # --- Gemini 的指令 (Prompt)，针对新模型优化 ---
@@ -66,8 +62,9 @@ files = st.file_uploader(
 
 if files:
     for file in files:
-        # 使用 file.id 作为唯一的 key，比索引更稳定
-        file_id = file.id
+        # ✅ --- 关键修正点：使用 file.file_id 作为唯一的 key ---
+        file_id = file.file_id
+        
         with st.expander(f"📷 图片：{file.name}", expanded=True):
             col1, col2 = st.columns(2)
 
@@ -81,20 +78,15 @@ if files:
                 if st.button(f"🚀 使用最新模型识别", key=f"btn_{file_id}"):
                     with st.spinner("🧠 最新 Gemini 模型正在全力识别中..."):
                         try:
-                            # 使用新的、更强大的模型进行识别
                             response = model.generate_content([PROMPT_TEMPLATE, image])
-
-                            # 鲁棒性处理：去除模型可能意外返回的代码块标记
                             cleaned_text = response.text.strip().removeprefix("```json").removesuffix("```").strip()
-                            
                             data = json.loads(cleaned_text)
                             df = pd.DataFrame.from_records(data)
 
-                            # 确保关键列存在，防止后续操作出错
                             expected_cols = ["品名", "数量", "单价"]
                             for col in expected_cols:
                                 if col not in df.columns:
-                                    df[col] = "" # 如果模型漏了某一列，则补充空列
+                                    df[col] = ""
                             
                             st.session_state.results[file_id] = df[expected_cols]
                             st.success("✅ 识别完成！")
@@ -115,7 +107,6 @@ if st.session_state.results:
     st.divider()
     st.header("📝 统一编辑与导出")
 
-    # 从 session_state 中合并所有识别结果
     all_dfs = list(st.session_state.results.values())
     if all_dfs:
         merged_df = pd.concat(all_dfs, ignore_index=True)
@@ -130,11 +121,9 @@ if st.session_state.results:
 
         st.subheader("📥 导出为 Excel 文件")
         
-        # 将数据转换为可下载的 Excel 格式
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             edited_df.to_excel(writer, index=False, sheet_name='识别结果')
-            # 自动调整列宽，让表格更好看
             writer.sheets['识别结果'].autofit()
         
         excel_data = output.getvalue()
