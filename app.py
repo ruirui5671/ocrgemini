@@ -16,7 +16,7 @@ st.set_page_config(
 )
 
 # --- 应用标题和说明 ---
-st.title("🚀 Gemini 智能订单诊断工具 V3.2 (批量处理版)")
+st.title("🚀 Gemini 智能订单诊断工具 V3.3 (批量处理版)")
 st.markdown("""
 欢迎使用全新优化的批量处理版本！现在，您可以一次性完成所有订单的诊断。
 - **批量识别**：上传所有图片后，只需 **点击一次按钮**，即可识别全部图片。
@@ -70,11 +70,9 @@ files = st.file_uploader(
 )
 
 
-# --- ✅ 核心修改1：批量处理逻辑 ---
+# --- 批量处理逻辑 ---
 if files:
-    # 将识别按钮放在所有文件上传之后，实现一键批量处理
     if st.button("🚀 STEP 2: 一次性识别所有图片", use_container_width=True, type="primary"):
-        # 筛选出尚未识别的图片
         files_to_process = [f for f in files if f.file_id not in st.session_state.results]
         
         if not files_to_process:
@@ -116,12 +114,11 @@ if files:
                     st.session_state.results[file_id] = df[final_cols]
 
                 except Exception as e:
-                    # 如果单张图片失败，记录错误并继续处理下一张
                     st.session_state.results[file_id] = pd.DataFrame([{"品名": f"识别失败: {e}", "状态": "❌ 错误"}])
 
-            progress_bar.empty() #完成后隐藏进度条
+            progress_bar.empty()
             st.success("🎉 所有新图片识别完成！")
-            st.rerun() # 刷新页面以显示所有结果
+            st.rerun()
 
 
     # --- 独立展示每张图片及其结果 ---
@@ -129,11 +126,11 @@ if files:
     for file in files:
         file_id = file.file_id
         with st.expander(f"📄 订单：{file.name}", expanded=True):
-            col1, col2 = st.columns([0.5, 1.5]) # 调整列的比例，让图片列窄，表格列宽
+            col1, col2 = st.columns([0.5, 1.5])
             
             with col1:
-                 # ✅ 核心修改2：缩小图片尺寸
-                st.image(Image.open(file).convert("RGB"), use_column_width=True, caption="订单原图")
+                 # ✅ --- 核心修正点：使用新的参数 use_container_width ---
+                st.image(Image.open(file).convert("RGB"), use_container_width=True, caption="订单原图")
 
             with col2:
                 if file_id in st.session_state.results:
