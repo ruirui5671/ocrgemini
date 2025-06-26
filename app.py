@@ -10,18 +10,21 @@ import numpy as np
 
 # --- 页面基础配置 ---
 st.set_page_config(
-    page_title="Gemini 智能订单诊断",
-    page_icon="🕵️",
+    page_title="Gemini 并列诊断",
+    page_icon="📊",
     layout="wide"
 )
 
 # --- 应用标题和说明 ---
-st.title("🕵️ Gemini 智能订单诊断工具 V3.0")
+st.title("📊 Gemini 智能订单诊断工具 V3.1 (并列诊断版)")
 st.markdown("""
-欢迎使用具备 **根源分析能力** 的全新版本！本工具旨在帮您快速定位订单中的潜在错误。
-- **忠实识别**：完整展示识别出的 `数量`、`单价` 和 `总价`。
-- **计算对比**：独立计算 `识别数量 × 识别单价` 的结果，供您直接对比。
-- **智能诊断**：当计算结果与识别总价不符时，**反向推算出可能的正确数值**，帮您快速定位笔误或识别错误。
+欢迎使用！本工具通过 **并列展示** 计算结果与推算结果，让您对订单数据一目了然，快速定位潜在错误。
+- **忠实识别**：完整展示图片中的 `识别数量`、`识别单价`、`识别总价`。
+- **并列对比**：
+  - **`计算总价`**: `识别数量 × 识别单价` 的结果。
+  - **`[按总价]推算数量`**: 假设总价和单价正确，反推出的数量。
+  - **`[按总价]推算单价`**: 假设总价和数量正确，反推出的单价。
+- **一目了然**：通过直接对比这几列数字，您可以瞬间判断问题所在。
 """)
 
 # --- API 密钥配置 和 模型初始化 ---
@@ -74,114 +77,81 @@ if files:
         file_id = file.file_id
         
         with st.expander(f"📷 图片：{file.name}", expanded=True):
-            col1, col2 = st.columns([0.8, 1.2]) # 让右边表格宽一点
+            st.image(Image.open(file).convert("RGB"), width=250) # 图片放小一点，给表格留出空间
+            
+            if st.button(f"🚀 开始并列诊断", key=f"btn_{file_id}"):
+                with st.spinner("🕵️ Gemini 正在进行识别和并列诊断..."):
+                    try:
+                        image = Image.open(file).convert("RGB") # 重新打开图片用于识别
+                        response = model.generate_content([PROMPT_TEMPLATE, image])
+                        cleaned_text = response.text.strip().removeprefix("```json").removesuffix("```").strip()
+                        data = json.loads(cleaned_text)
+                        
+                        df = pd.DataFrame.from_records(data)
+                        df.rename(columns={
+                            "数量": "识别数量",
+                            "单价": "识别单价",
+                            "总价": "识别总价"
+                        }, inplace=True)
+                        
+                        # --- ✅ 核心诊断逻辑开始 ---
+                        expected_cols = ["品名", "识别数量", "识别单价", "识别总价"]
+                        for col in expected_cols:
+                            if col not in df.columns:
+                                df[col] = ""
+                        
+                        df['数量_num'] = df['识别数量'].apply(clean_and_convert_to_numeric)
+                        df['单价_num'] = df['识别单价'].apply(clean_and_convert_to_numeric)
+                        df['总价_num'] = df['识别总价'].apply(clean_and_convert_to_numeric)
+                        
+                        # ✅ 1. 计算基准答案
+                        df['计算总价'] = (df['数量_num'] * df['单价_num']).round(2)
+                        
+                        # ✅ 2. 反向推算数量 (处理除以0的情况)
+                        df['[按总价]推算数量'] = np.where(df['单价_num'] != 0, (df['总价_num'] / df['单价_num']).round(2), np.nan)
+                        
+                        # ✅ 3. 反向推算单价 (处理除以0的情况)
+                        df['[按总价]推算单价'] = np.where(df['数量_num'] != 0, (df['总价_num'] / df['数量_num']).round(2), np.nan)
+                        
+                        # ✅ 4. 生成简单的状态
+                        df['状态'] = np.where(np.isclose(df['计算总价'], df['总价_num']), '✅ 一致', '⚠️ 需核对')
+                        df.loc[df['计算总价'].isna() | df['总价_num'].isna(), '状态'] = '❔ 信息不足'
 
-            with col1:
-                st.subheader("原始图片")
-                image = Image.open(file).convert("RGB")
-                st.image(image, use_container_width=True)
+                        # --- 核心诊断逻辑结束 ---
+                        
+                        final_cols = ["品名", "识别数量", "识别单价", "识别总价", "计算总价", "[按总价]推算数量", "[按总价]推算单价", "状态"]
+                        st.session_state.results[file_id] = df[final_cols]
+                        
+                        st.success("✅ 诊断完成！请查看下面的并列分析表。")
+                        st.rerun()
 
-            with col2:
-                st.subheader("识别与诊断分析")
-                if st.button(f"🚀 开始智能诊断", key=f"btn_{file_id}"):
-                    with st.spinner("🕵️ Gemini 正在进行识别和深度诊断..."):
-                        try:
-                            response = model.generate_content([PROMPT_TEMPLATE, image])
-                            cleaned_text = response.text.strip().removeprefix("```json").removesuffix("```").strip()
-                            data = json.loads(cleaned_text)
-                            
-                            # ✅ 为了清晰，明确重命名列
-                            df = pd.DataFrame.from_records(data)
-                            df.rename(columns={
-                                "数量": "识别数量",
-                                "单价": "识别单价",
-                                "总价": "识别总价"
-                            }, inplace=True)
-                            
-                            # --- ✅ 核心诊断逻辑开始 ---
-                            # 1. 确保所有需要的列都存在
-                            expected_cols = ["品名", "识别数量", "识别单价", "识别总价"]
-                            for col in expected_cols:
-                                if col not in df.columns:
-                                    df[col] = ""
-                            
-                            # 2. 清洗所有识别出的数据为数值
-                            df['数量_num'] = df['识别数量'].apply(clean_and_convert_to_numeric)
-                            df['单价_num'] = df['识别单价'].apply(clean_and_convert_to_numeric)
-                            df['总价_num'] = df['识别总价'].apply(clean_and_convert_to_numeric)
-                            
-                            # 3. 计算“标准答案”总价
-                            df['计算总价'] = (df['数量_num'] * df['单价_num']).round(2)
-                            
-                            # 4. 【关键一步】反向推算，进行诊断
-                            def diagnose_discrepancy(row):
-                                calc_total = row['计算总价']
-                                rec_total = row['总价_num']
-                                
-                                # 如果信息不全，无法诊断
-                                if pd.isna(calc_total) or pd.isna(rec_total):
-                                    return "❔ 信息不足"
-                                
-                                # 如果完全一致
-                                if np.isclose(calc_total, rec_total):
-                                    return "✅ 完全一致"
-                                
-                                # 如果不一致，开始诊断
-                                suggestion = f"⚠️ 不一致 (差额: {rec_total - calc_total:.2f})"
-                                suggestions = []
-                                
-                                # 诊断1: 总价不变，数量可能是多少？
-                                if row['单价_num'] != 0 and pd.notna(row['单价_num']):
-                                    implied_qty = rec_total / row['单价_num']
-                                    suggestions.append(f"数量应为 **{implied_qty:.2f}**")
-                                
-                                # 诊断2: 总价不变，单价可能是多少？
-                                if row['数量_num'] != 0 and pd.notna(row['数量_num']):
-                                    implied_price = rec_total / row['数量_num']
-                                    suggestions.append(f"单价应为 **{implied_price:.2f}**")
-                                
-                                if suggestions:
-                                    suggestion += f"\n可能原因: {' 或 '.join(suggestions)}"
-                                    
-                                return suggestion
+                    except Exception as e:
+                        st.error(f"❌ 处理失败，发生未知错误：{e}")
 
-                            df['差异诊断'] = df.apply(diagnose_discrepancy, axis=1)
+            # 在按钮下方直接显示结果表格
+            if file_id in st.session_state.results:
+                st.dataframe(st.session_state.results[file_id], use_container_width=True)
+                st.caption("👆 请直接对比上方表格中的数字，快速定位问题。")
 
-                            # --- 核心诊断逻辑结束 ---
-                            
-                            final_cols = ["品名", "识别数量", "识别单价", "识别总价", "计算总价", "差异诊断"]
-                            st.session_state.results[file_id] = df[final_cols]
-                            
-                            st.success("✅ 诊断完成！请查看分析结果。")
-                            st.rerun()
 
-                        except json.JSONDecodeError:
-                            st.error("❌ 结构化识别失败：模型返回的不是有效的JSON格式。")
-                            st.info("模型返回的原始文本：")
-                            st.text_area("原始输出", cleaned_text if 'cleaned_text' in locals() else response.text, height=150)
-                        except Exception as e:
-                            st.error(f"❌ 处理失败，发生未知错误：{e}")
-
-                if file_id in st.session_state.results:
-                    st.dataframe(st.session_state.results[file_id], use_container_width=True)
-                    st.caption("上方为诊断结果。")
-
+# --- 统一编辑与导出 ---
 if st.session_state.results:
     st.divider()
     st.header("📝 统一编辑与导出")
 
     all_dfs = list(st.session_state.results.values())
     if all_dfs:
-        # 为了避免干扰，导出时不包含诊断列，只导出干净的数据
-        export_cols = ["品名", "识别数量", "识别单价", "识别总价", "计算总价"]
-        merged_df = pd.concat(all_dfs, ignore_index=True)[export_cols]
+        # 在最终编辑和导出时，可以保留所有列，因为它们都有参考价值
+        merged_df = pd.concat(all_dfs, ignore_index=True)
 
-        st.info("您可以在下表中直接修改。建议参考上方的“差异诊断”来修正“识别数量”或“识别单价”。")
+        st.info("您可以在下表中修改 **识别数量**、**识别单价**、**识别总价**。其它列仅供参考。")
         edited_df = st.data_editor(
             merged_df,
             num_rows="dynamic",
             use_container_width=True,
-            height=300
+            height=300,
+            # 锁定所有计算和推算列
+            disabled=["计算总价", "[按总价]推算数量", "[按总价]推算单价", "状态"]
         )
 
         st.subheader("📥 导出为 Excel 文件")
