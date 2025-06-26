@@ -10,21 +10,18 @@ import numpy as np
 
 # --- 页面基础配置 ---
 st.set_page_config(
-    page_title="Gemini 并列诊断",
-    page_icon="📊",
+    page_title="Gemini 批量诊断",
+    page_icon="🚀",
     layout="wide"
 )
 
 # --- 应用标题和说明 ---
-st.title("📊 Gemini 智能订单诊断工具 V3.1 (并列诊断版)")
+st.title("🚀 Gemini 智能订单诊断工具 V3.2 (批量处理版)")
 st.markdown("""
-欢迎使用！本工具通过 **并列展示** 计算结果与推算结果，让您对订单数据一目了然，快速定位潜在错误。
-- **忠实识别**：完整展示图片中的 `识别数量`、`识别单价`、`识别总价`。
-- **并列对比**：
-  - **`计算总价`**: `识别数量 × 识别单价` 的结果。
-  - **`[按总价]推算数量`**: 假设总价和单价正确，反推出的数量。
-  - **`[按总价]推算单价`**: 假设总价和数量正确，反推出的单价。
-- **一目了然**：通过直接对比这几列数字，您可以瞬间判断问题所在。
+欢迎使用全新优化的批量处理版本！现在，您可以一次性完成所有订单的诊断。
+- **批量识别**：上传所有图片后，只需 **点击一次按钮**，即可识别全部图片。
+- **优化布局**：缩小了图片预览尺寸，让数据表格更突出，界面更清爽。
+- **独立展示**：每张图片及其诊断结果会独立展示，方便您逐一核对。
 """)
 
 # --- API 密钥配置 和 模型初始化 ---
@@ -36,7 +33,7 @@ except Exception as e:
     st.stop()
 
 
-# --- Prompt 保持不变，它负责抓取最原始的数据 ---
+# --- Prompt 保持不变 ---
 PROMPT_TEMPLATE = """
 你是一个顶级的、非常严谨的订单数据录入专家。
 请仔细识别这张手写订单图片，并提取每一行商品的'品名'、'数量'、'单价'和'总价'。
@@ -67,81 +64,91 @@ def clean_and_convert_to_numeric(value):
 
 # --- 文件上传组件 ---
 files = st.file_uploader(
-    "📤 上传一张或多张订单图片 (jpg, jpeg, png)",
+    "📤 STEP 1: 上传所有订单图片",
     type=["jpg", "jpeg", "png"],
     accept_multiple_files=True
 )
 
+
+# --- ✅ 核心修改1：批量处理逻辑 ---
 if files:
+    # 将识别按钮放在所有文件上传之后，实现一键批量处理
+    if st.button("🚀 STEP 2: 一次性识别所有图片", use_container_width=True, type="primary"):
+        # 筛选出尚未识别的图片
+        files_to_process = [f for f in files if f.file_id not in st.session_state.results]
+        
+        if not files_to_process:
+            st.toast("所有已上传的图片都识别过啦！")
+        else:
+            total_files = len(files_to_process)
+            progress_bar = st.progress(0, text="准备开始批量识别...")
+
+            for i, file in enumerate(files_to_process):
+                file_id = file.file_id
+                progress_text = f"正在识别第 {i + 1}/{total_files} 张图片: {file.name}"
+                progress_bar.progress((i + 1) / total_files, text=progress_text)
+                
+                try:
+                    image = Image.open(file).convert("RGB")
+                    response = model.generate_content([PROMPT_TEMPLATE, image])
+                    cleaned_text = response.text.strip().removeprefix("```json").removesuffix("```").strip()
+                    data = json.loads(cleaned_text)
+                    
+                    df = pd.DataFrame.from_records(data)
+                    df.rename(columns={"数量": "识别数量", "单价": "识别单价", "总价": "识别总价"}, inplace=True)
+                    
+                    expected_cols = ["品名", "识别数量", "识别单价", "识别总价"]
+                    for col in expected_cols:
+                        if col not in df.columns:
+                            df[col] = ""
+                    
+                    df['数量_num'] = df['识别数量'].apply(clean_and_convert_to_numeric)
+                    df['单价_num'] = df['识别单价'].apply(clean_and_convert_to_numeric)
+                    df['总价_num'] = df['识别总价'].apply(clean_and_convert_to_numeric)
+                    
+                    df['计算总价'] = (df['数量_num'] * df['单价_num']).round(2)
+                    df['[按总价]推算数量'] = np.where(df['单价_num'] != 0, (df['总价_num'] / df['单价_num']).round(2), np.nan)
+                    df['[按总价]推算单价'] = np.where(df['数量_num'] != 0, (df['总价_num'] / df['数量_num']).round(2), np.nan)
+                    df['状态'] = np.where(np.isclose(df['计算总价'], df['总价_num']), '✅ 一致', '⚠️ 需核对')
+                    df.loc[df['计算总价'].isna() | df['总价_num'].isna(), '状态'] = '❔ 信息不足'
+
+                    final_cols = ["品名", "识别数量", "识别单价", "识别总价", "计算总价", "[按总价]推算数量", "[按总价]推算单价", "状态"]
+                    st.session_state.results[file_id] = df[final_cols]
+
+                except Exception as e:
+                    # 如果单张图片失败，记录错误并继续处理下一张
+                    st.session_state.results[file_id] = pd.DataFrame([{"品名": f"识别失败: {e}", "状态": "❌ 错误"}])
+
+            progress_bar.empty() #完成后隐藏进度条
+            st.success("🎉 所有新图片识别完成！")
+            st.rerun() # 刷新页面以显示所有结果
+
+
+    # --- 独立展示每张图片及其结果 ---
+    st.subheader("STEP 3: 逐一核对诊断结果")
     for file in files:
         file_id = file.file_id
-        
-        with st.expander(f"📷 图片：{file.name}", expanded=True):
-            st.image(Image.open(file).convert("RGB"), width=250) # 图片放小一点，给表格留出空间
+        with st.expander(f"📄 订单：{file.name}", expanded=True):
+            col1, col2 = st.columns([0.5, 1.5]) # 调整列的比例，让图片列窄，表格列宽
             
-            if st.button(f"🚀 开始并列诊断", key=f"btn_{file_id}"):
-                with st.spinner("🕵️ Gemini 正在进行识别和并列诊断..."):
-                    try:
-                        image = Image.open(file).convert("RGB") # 重新打开图片用于识别
-                        response = model.generate_content([PROMPT_TEMPLATE, image])
-                        cleaned_text = response.text.strip().removeprefix("```json").removesuffix("```").strip()
-                        data = json.loads(cleaned_text)
-                        
-                        df = pd.DataFrame.from_records(data)
-                        df.rename(columns={
-                            "数量": "识别数量",
-                            "单价": "识别单价",
-                            "总价": "识别总价"
-                        }, inplace=True)
-                        
-                        # --- ✅ 核心诊断逻辑开始 ---
-                        expected_cols = ["品名", "识别数量", "识别单价", "识别总价"]
-                        for col in expected_cols:
-                            if col not in df.columns:
-                                df[col] = ""
-                        
-                        df['数量_num'] = df['识别数量'].apply(clean_and_convert_to_numeric)
-                        df['单价_num'] = df['识别单价'].apply(clean_and_convert_to_numeric)
-                        df['总价_num'] = df['识别总价'].apply(clean_and_convert_to_numeric)
-                        
-                        # ✅ 1. 计算基准答案
-                        df['计算总价'] = (df['数量_num'] * df['单价_num']).round(2)
-                        
-                        # ✅ 2. 反向推算数量 (处理除以0的情况)
-                        df['[按总价]推算数量'] = np.where(df['单价_num'] != 0, (df['总价_num'] / df['单价_num']).round(2), np.nan)
-                        
-                        # ✅ 3. 反向推算单价 (处理除以0的情况)
-                        df['[按总价]推算单价'] = np.where(df['数量_num'] != 0, (df['总价_num'] / df['数量_num']).round(2), np.nan)
-                        
-                        # ✅ 4. 生成简单的状态
-                        df['状态'] = np.where(np.isclose(df['计算总价'], df['总价_num']), '✅ 一致', '⚠️ 需核对')
-                        df.loc[df['计算总价'].isna() | df['总价_num'].isna(), '状态'] = '❔ 信息不足'
+            with col1:
+                 # ✅ 核心修改2：缩小图片尺寸
+                st.image(Image.open(file).convert("RGB"), use_column_width=True, caption="订单原图")
 
-                        # --- 核心诊断逻辑结束 ---
-                        
-                        final_cols = ["品名", "识别数量", "识别单价", "识别总价", "计算总价", "[按总价]推算数量", "[按总价]推算单价", "状态"]
-                        st.session_state.results[file_id] = df[final_cols]
-                        
-                        st.success("✅ 诊断完成！请查看下面的并列分析表。")
-                        st.rerun()
-
-                    except Exception as e:
-                        st.error(f"❌ 处理失败，发生未知错误：{e}")
-
-            # 在按钮下方直接显示结果表格
-            if file_id in st.session_state.results:
-                st.dataframe(st.session_state.results[file_id], use_container_width=True)
-                st.caption("👆 请直接对比上方表格中的数字，快速定位问题。")
+            with col2:
+                if file_id in st.session_state.results:
+                    st.dataframe(st.session_state.results[file_id], use_container_width=True)
+                else:
+                    st.info("这张图片等待识别...")
 
 
 # --- 统一编辑与导出 ---
 if st.session_state.results:
     st.divider()
-    st.header("📝 统一编辑与导出")
+    st.header("STEP 4: 统一编辑与导出")
 
-    all_dfs = list(st.session_state.results.values())
+    all_dfs = [df for df in st.session_state.results.values() if '识别数量' in df.columns]
     if all_dfs:
-        # 在最终编辑和导出时，可以保留所有列，因为它们都有参考价值
         merged_df = pd.concat(all_dfs, ignore_index=True)
 
         st.info("您可以在下表中修改 **识别数量**、**识别单价**、**识别总价**。其它列仅供参考。")
@@ -150,7 +157,6 @@ if st.session_state.results:
             num_rows="dynamic",
             use_container_width=True,
             height=300,
-            # 锁定所有计算和推算列
             disabled=["计算总价", "[按总价]推算数量", "[按总价]推算单价", "状态"]
         )
 
