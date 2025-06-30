@@ -10,19 +10,18 @@ import numpy as np
 
 # --- 页面基础配置 ---
 st.set_page_config(
-    page_title="Gemini 稳健队列诊断",
-    page_icon="🍲",
+    page_title="Gemini 智能订单诊断",
+    page_icon="🧪",
     layout="wide"
 )
 
 # --- 应用标题和说明 ---
-st.title("🍲 Gemini 智能订单诊断工具 V4.4 (分类与动态计算版)")
-st.markdown("""
-欢迎使用！本版本在交互式编辑的基础上，新增 **智能分类** 与 **动态计算** 功能！
-- **智能分类**：AI 会自动将商品归入 `鱼类`、`蔬菜类`、`肉类` 等类别。
-- **动态计算**：您在表格中修改 `数量` 或 `单价`后，`计算总价` 和 `状态` **会立即自动更新**！
-- **图表对照**：在每个识别结果旁直接显示原始图片，核对一目了然。
-- **数据联动**：您在上方任何表格中所做的修改，都会 **立即自动同步** 到下方的汇总总表及最终的Excel导出文件中。
+st.title("🧪 Gemini 智能订单诊断工具 V4.7 (2.5 Pro 实验版)")
+st.warning("""
+**实验性版本警告**：本版本尝试调用 `gemini-2.5-pro` 的一个预览版模型。
+- **如果成功**：恭喜！您的账户有权限提前体验新模型。
+- **如果失败（常见情况）**：应用会报错，提示找不到模型或权限不足。这属于正常现象。
+- **生产环境建议**：为了应用长期稳定，推荐使用 `gemini-1.5-pro-latest`。
 """)
 
 # --- 会话状态 (Session State) 初始化 ---
@@ -39,15 +38,25 @@ SAFETY_SETTINGS = [
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
 ]
 
-# --- API 密钥配置 和 模型初始化 ---
+# --- ✅ [V4.7 核心修改] API 密钥配置 和 模型初始化 ---
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    model = genai.GenerativeModel("gemini-1.5-pro-latest", safety_settings=SAFETY_SETTINGS)
+    
+    # 实验性地尝试调用一个已知的 Gemini 2.5 Pro 预览版模型名称
+    # 注意：这很可能会因为权限问题而失败！
+    experimental_model_name = "gemini-2.5-pro-preview-05-06" 
+    
+    model = genai.GenerativeModel(experimental_model_name, safety_settings=SAFETY_SETTINGS)
+    
+    st.success(f"成功初始化实验性模型：`{experimental_model_name}`")
+    
 except Exception as e:
-    st.error(f"初始化失败，请检查 API 密钥或模型名称是否正确: {e}")
+    st.error(f"初始化实验性模型失败: {e}")
+    st.info("这通常意味着您的 API 密钥没有访问该预览版模型的权限。建议切换回 'gemini-1.5-pro-latest' 以确保应用可用。")
     st.stop()
 
-# --- ✅ [V4.4 核心升级] Prompt ---
+
+# --- Prompt (保持不变) ---
 PROMPT_TEMPLATE = """
 你是一个顶级的、非常严谨的餐饮行业订单数据录入专家。订单内容主要是餐厅后厨采购的食材。
 请仔细识别这张手写订单图片，并提取每一行商品的'品名'、'数量'、'单价'和'总价'，并对商品进行分类。
@@ -55,60 +64,57 @@ PROMPT_TEMPLATE = """
 请严格遵守以下规则：
 1.  最终必须输出一个格式完美的 JSON 数组。
 2.  数组中的每一个 JSON 对象代表一个商品，且必须包含五个键： "品名", "数量", "单价", "总价", "分类"。
-3.  新增规则：请为每个商品增加一个 '分类' 键。根据商品名称，将其归入以下类别之一：'鱼类', '猪肉类', '鸡肉类', '鸭肉类', '蔬菜类', '牛肉类', '羊肉类', '调料类', '消耗品类'。如果无法判断，可以设为"其他"。
-    - 示例: '黄鱼' 归入 '鱼类'; '五花肉' 归入 '猪肉类'; '香菜' 归入 '蔬菜类'; '洗洁精' 归入 '消耗品类'。
-4.  品名和分类必须是文字。数量、单价、总价应该是数字或能解析为数字的字符串。
-5.  如果图片中的某一行缺少某个信息（例如没有写单价），请将对应的值设为空字符串 ""。
-6.  如果某个文字或数字非常模糊，无法确定，也请设为空字符串 ""。
-7.  **你的回答必须是纯粹的、可以直接解析的 JSON 文本**。绝对不要包含任何解释、说明文字、或者 Markdown 的 ```json ``` 标记。
+3.  **重要规则：手写单的总价，经常是“数量 x 单价”后进行四舍五入或直接抹零的结果。** 你的任务是 **忠实地提取图片上写的每一个数字**，即使它们在数学上不完全相等。不要尝试自己去修正或平衡这些数字。
+    - **【核心示例】**：如果图片写着 `羊肉 15.9 23 365`，即使 `15.9 * 23 = 365.7`，商家也可能只写 `365`。你必须提取 `365` 作为总价，而不是 `365.7`。
+4.  **新增知识提示**：在餐饮语境下，'花莲'和'花鲢'通常都指的是'花鲢鱼'，请统一识别为'花鲢鱼'并归入'鱼类'。
+5.  请为每个商品增加一个 '分类' 键。根据商品名称，将其归入以下类别之一：'鱼类', '猪肉类', '鸡肉类', '鸭肉类', '蔬菜类', '牛肉类', '羊肉类', '调料类', '消耗品类'。如果无法判断，可以设为"其他"。
+6.  品名和分类必须是文字。数量、单价、总价应该是数字或能解析为数字的字符串。
+7.  如果图片中的某一行缺少某个信息（例如没有写单价），请将对应的值设为空字符串 ""。
+8.  如果某个文字或数字非常模糊，无法确定，也请设为空字符串 ""。
+9.  **你的回答必须是纯粹的、可以直接解析的 JSON 文本**。绝对不要包含任何解释、说明文字、或者 Markdown 的 ```json ``` 标记。
 """
 
-# --- 数据清洗与计算函数 ---
+# ... (后续代码与 V4.6.1 版本完全相同，故省略) ...
+# --- 数据清洗与计算函数 (无变化) ---
 def clean_and_convert_to_numeric(value):
-    if value is None or not isinstance(value, str) or value.strip() == "": return np.nan
+    if value is None or (isinstance(value, str) and value.strip() == ""):
+        return np.nan
+    if isinstance(value, (int, float)):
+        return float(value)
     numbers = re.findall(r'[\d\.]+', str(value))
     if numbers:
-        try: return float(numbers[0])
-        except (ValueError, IndexError): return np.nan
+        try:
+            return float(numbers[0])
+        except (ValueError, IndexError):
+            return np.nan
     return np.nan
 
-# ✅ [V4.4 核心升级] 新增可重用的计算函数
 def recalculate_dataframe(df):
-    """对给定的DataFrame进行清洗、计算和状态更新"""
     df_copy = df.copy()
-
-    # 确保关键列存在，防止用户删除列导致报错
     expected_cols = ["品名", "分类", "识别数量", "识别单价", "识别总价"]
     for col in expected_cols:
         if col not in df_copy.columns:
             df_copy[col] = ""
 
-    # 应用清洗和转换
     df_copy['数量_num'] = df_copy['识别数量'].apply(clean_and_convert_to_numeric)
     df_copy['单价_num'] = df_copy['识别单价'].apply(clean_and_convert_to_numeric)
     df_copy['总价_num'] = df_copy['识别总价'].apply(clean_and_convert_to_numeric)
-
-    # 重新计算
     df_copy['计算总价'] = (df_copy['数量_num'] * df_copy['单价_num']).round(2)
+    
+    df_copy['状态'] = np.where(np.isclose(df_copy['计算总价'], df_copy['总价_num']), '✅ 一致',
+                           np.where(np.isclose(df_copy['计算总价'].round(), df_copy['总价_num']), '✅ 一致 (已抹零)', '⚠️ 需核对'))
+    df_copy.loc[df_copy['计算总价'].isna() | df_copy['总价_num'].isna(), '状态'] = '❔ 信息不足'
+    
     df_copy['[按总价]推算数量'] = np.where(df_copy['单价_num'] != 0, (df_copy['总价_num'] / df_copy['单价_num']).round(2), np.nan)
     df_copy['[按总价]推算单价'] = np.where(df_copy['数量_num'] != 0, (df_copy['总价_num'] / df_copy['数量_num']).round(2), np.nan)
 
-    # 重新判断状态 (equal_nan=True 让两个NaN被视为一致)
-    df_copy['状态'] = np.where(np.isclose(df_copy['计算总价'], df_copy['总价_num'], equal_nan=True), '✅ 一致', '⚠️ 需核对')
-    df_copy.loc[df_copy['计算总价'].isna() | df_copy['总价_num'].isna(), '状态'] = '❔ 信息不足'
-
-    # 定义最终列顺序，增加了'分类'
     final_cols = ["品名", "分类", "识别数量", "识别单价", "识别总价", "计算总价", "[按总价]推算数量", "[按总价]推算单价", "状态"]
-    
-    # 确保所有最终列都存在
     for col in final_cols:
         if col not in df_copy.columns:
             df_copy[col] = np.nan
-            
     return df_copy[final_cols]
 
-
-# --- 文件上传与队列管理 ---
+# --- 文件上传与队列管理 (无变化) ---
 st.header("STEP 1: 上传所有订单图片")
 uploaded_files = st.file_uploader("请在此处上传一张或多张图片", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 if uploaded_files:
@@ -122,7 +128,7 @@ if uploaded_files:
         st.info("检测到新的文件列表，已重置处理队列。")
         st.rerun()
 
-# --- 队列处理控制中心 ---
+# --- 队列处理控制中心 (无变化) ---
 if st.session_state.file_list:
     files_to_process = [f for f in st.session_state.file_list if f.file_id not in st.session_state.processed_ids]
     total_count = len(st.session_state.file_list)
@@ -160,7 +166,6 @@ if st.session_state.file_list:
                 df = pd.DataFrame.from_records(data)
                 df.rename(columns={"数量": "识别数量", "单价": "识别单价", "总价": "识别总价"}, inplace=True)
                 
-                # ✅ [V4.4 核心升级] 调用重构的计算函数
                 processed_df = recalculate_dataframe(df)
 
                 st.session_state.results[file_id] = processed_df
@@ -181,9 +186,8 @@ if st.session_state.file_list:
             st.info("所有图片均已处理。请在下方查看、编辑和导出结果。")
 
 
-# --- ✅ [V4.4 核心修改] 结果展示、编辑与动态计算 ---
+# --- 结果展示、编辑与动态计算 (无变化) ---
 st.header("STEP 3: 对照图片，编辑结果（编辑后自动重算）")
-
 if not st.session_state.results:
     st.info("尚未处理任何图片。请先上传并开始处理。")
 else:
@@ -195,58 +199,56 @@ else:
             col_img, col_editor = st.columns([1, 2])
 
             with col_img:
-                st.image(file, caption="原始订单图片", use_column_width=True)
+                st.image(file, caption="原始订单图片", use_container_width=True)
 
             with col_editor:
                 current_df = st.session_state.results[file.file_id]
                 
-                # 捕获用户编辑后的 DataFrame
                 edited_df = st.data_editor(
                     current_df,
                     key=f"editor_{file.file_id}",
                     num_rows="dynamic",
                     use_container_width=True,
-                    # 禁用自动计算的列，但允许用户修改 "分类"
                     disabled=["计算总价", "[按总价]推算数量", "[按总价]推算单价", "状态"]
                 )
 
-                # ✅ [V4.4 核心升级] 动态计算：对编辑后的数据立即重新计算
                 recalculated_edited_df = recalculate_dataframe(edited_df)
                 
-                # 将完全更新（包含最新计算结果）的 DataFrame 写回 session_state
                 st.session_state.results[file.file_id] = recalculated_edited_df
 
-    # --- 汇总预览与导出 ---
-    st.markdown("---")
-    st.header("STEP 4: 预览汇总结果并导出")
+# --- 汇总预览与导出 (无变化) ---
+st.markdown("---")
+st.header("STEP 4: 预览汇总结果并导出")
 
-    # 从 session_state 中收集所有（可能已被编辑和重算过的）DataFrame
-    all_dfs = [df for df in st.session_state.results.values() if isinstance(df, pd.DataFrame) and '识别数量' in df.columns]
+all_dfs = [df for df in st.session_state.results.values() if isinstance(df, pd.DataFrame) and '识别数量' in df.columns]
+
+if all_dfs:
+    st.subheader("统一结果预览区 (根据您的修改实时更新)")
     
-    if all_dfs:
-        st.subheader("统一结果预览区 (根据您的修改实时更新)")
-        
-        merged_df = pd.concat(all_dfs, ignore_index=True)
-        
-        st.dataframe(merged_df, use_container_width=True, height=300)
-        
-        st.subheader("导出为 Excel 文件")
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            merged_df.to_excel(writer, index=False, sheet_name='诊断结果')
-            worksheet = writer.sheets['诊断结果']
-            for i, col in enumerate(merged_df.columns):
-                column_len = max(merged_df[col].astype(str).map(len).max(), len(col)) + 2
-                worksheet.set_column(i, i, column_len)
+    merged_df = pd.concat(all_dfs, ignore_index=True)
+    
+    display_cols = ["品名", "分类", "识别数量", "识别单价", "识别总价", "计算总价", "状态"]
+    display_df = merged_df[[col for col in display_cols if col in merged_df.columns]]
+    
+    st.dataframe(display_df, use_container_width=True, height=300)
+    
+    st.subheader("导出为 Excel 文件")
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        merged_df.to_excel(writer, index=False, sheet_name='诊断结果')
+        worksheet = writer.sheets['诊断结果']
+        for i, col in enumerate(merged_df.columns):
+            column_len = max(merged_df[col].astype(str).map(len).max(), len(col)) + 2
+            worksheet.set_column(i, i, column_len)
 
-        excel_data = output.getvalue()
-        now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        file_name = f"订单诊断结果_{now}.xlsx"
-        
-        st.download_button(
-            label="✅ 点击下载【最终修正后】的Excel",
-            data=excel_data,
-            file_name=file_name,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
+    excel_data = output.getvalue()
+    now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_name = f"订单诊断结果_{now}.xlsx"
+    
+    st.download_button(
+        label="✅ 点击下载【包含完整分析列】的Excel",
+        data=excel_data,
+        file_name=file_name,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
