@@ -11,17 +11,17 @@ import numpy as np
 # --- 页面基础配置 ---
 st.set_page_config(
     page_title="Gemini 智能订单诊断",
-    page_icon="🧪",
+    page_icon="⚡️",
     layout="wide"
 )
 
 # --- 应用标题和说明 ---
-st.title("🧪 Gemini 智能订单诊断工具 V4.7 (2.5 Pro 实验版)")
-st.warning("""
-**实验性版本警告**：本版本尝试调用 `gemini-2.5-pro` 的一个预览版模型。
-- **如果成功**：恭喜！您的账户有权限提前体验新模型。
-- **如果失败（常见情况）**：应用会报错，提示找不到模型或权限不足。这属于正常现象。
-- **生产环境建议**：为了应用长期稳定，推荐使用 `gemini-1.5-pro-latest`。
+st.title("⚡️ Gemini 智能订单诊断工具 V4.8 (速度优化版)")
+st.success("""
+**速度已优化！** 本版本采用 `Gemini 1.5 Flash` 模型。
+- **性能提升**：识别速度相较于 Pro 版本有数倍提升，特别适合批量处理。
+- **高性价比**：在保持强大识别能力的同时，大幅降低了运行成本。
+- **功能不变**：所有动态计算、智能分类、交互式编辑功能均保持不变。
 """)
 
 # --- 会话状态 (Session State) 初始化 ---
@@ -38,25 +38,21 @@ SAFETY_SETTINGS = [
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
 ]
 
-# --- ✅ [V4.7 核心修改] API 密钥配置 和 模型初始化 ---
+# --- ✅ [V4.8 核心修改] API 密钥配置 和 模型初始化 ---
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     
-    # 实验性地尝试调用一个已知的 Gemini 2.5 Pro 预览版模型名称
-    # 注意：这很可能会因为权限问题而失败！
-    experimental_model_name = "gemini-2.5-pro-preview-05-06" 
-    
-    model = genai.GenerativeModel(experimental_model_name, safety_settings=SAFETY_SETTINGS)
-    
-    st.success(f"成功初始化实验性模型：`{experimental_model_name}`")
+    # 路径 B: 追求速度、稳定与性价比的平衡
+    model_name = "gemini-1.5-flash-latest"
+    model = genai.GenerativeModel(model_name, safety_settings=SAFETY_SETTINGS)
     
 except Exception as e:
-    st.error(f"初始化实验性模型失败: {e}")
-    st.info("这通常意味着您的 API 密钥没有访问该预览版模型的权限。建议切换回 'gemini-1.5-pro-latest' 以确保应用可用。")
+    st.error(f"模型 '{model_name}' 初始化失败: {e}")
+    st.info("请检查您的API密钥和网络连接。")
     st.stop()
 
 
-# --- Prompt (保持不变) ---
+# --- Prompt (保持不变, 对Flash模型同样有效) ---
 PROMPT_TEMPLATE = """
 你是一个顶级的、非常严谨的餐饮行业订单数据录入专家。订单内容主要是餐厅后厨采购的食材。
 请仔细识别这张手写订单图片，并提取每一行商品的'品名'、'数量'、'单价'和'总价'，并对商品进行分类。
@@ -74,7 +70,6 @@ PROMPT_TEMPLATE = """
 9.  **你的回答必须是纯粹的、可以直接解析的 JSON 文本**。绝对不要包含任何解释、说明文字、或者 Markdown 的 ```json ``` 标记。
 """
 
-# ... (后续代码与 V4.6.1 版本完全相同，故省略) ...
 # --- 数据清洗与计算函数 (无变化) ---
 def clean_and_convert_to_numeric(value):
     if value is None or (isinstance(value, str) and value.strip() == ""):
