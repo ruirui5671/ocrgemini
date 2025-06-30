@@ -11,17 +11,16 @@ import numpy as np
 # --- 页面基础配置 ---
 st.set_page_config(
     page_title="Gemini 智能订单诊断",
-    page_icon="⚡️",
+    page_icon="🎯",
     layout="wide"
 )
 
 # --- 应用标题和说明 ---
-st.title("⚡️ Gemini 智能订单诊断工具 V4.8 (速度优化版)")
-st.success("""
-**速度已优化！** 本版本采用 `Gemini 1.5 Flash` 模型。
-- **性能提升**：识别速度相较于 Pro 版本有数倍提升，特别适合批量处理。
-- **高性价比**：在保持强大识别能力的同时，大幅降低了运行成本。
-- **功能不变**：所有动态计算、智能分类、交互式编辑功能均保持不变。
+st.title("🎯 Gemini 智能订单诊断工具 V4.9 (极致质量版)")
+st.warning("""
+**极致质量模式**：本版本使用 `Gemini 2.5 Pro` 的预览模型以追求最高准确率。
+- **请注意**：处理速度会较慢，且该预览模型未来可能发生变化。
+- **体验优化**：新增 **空行自动过滤** 功能，并已将 **验算结果** 调整至第一列。
 """)
 
 # --- 会话状态 (Session State) 初始化 ---
@@ -38,15 +37,17 @@ SAFETY_SETTINGS = [
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
 ]
 
-# --- ✅ [V4.8 核心修改] API 密钥配置 和 模型初始化 ---
+# --- ✅ [V4.9 核心修改] API 密钥配置 和 模型初始化 ---
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     
-    # 切换到为速度优化的 Gemini 1.5 Flash 模型
-    model = genai.GenerativeModel("gemini-1.5-flash-latest", safety_settings=SAFETY_SETTINGS)
+    # 切换回追求极致质量的 2.5 Pro 预览模型
+    model_name = "gemini-2.5-pro-preview-05-06"
+    model = genai.GenerativeModel(model_name, safety_settings=SAFETY_SETTINGS)
     
 except Exception as e:
-    st.error(f"模型初始化失败: {e}")
+    st.error(f"模型 '{model_name}' 初始化失败: {e}")
+    st.info("这通常意味着您的API密钥无权访问该预览模型，或是模型名称已变更。")
     st.stop()
 
 
@@ -68,8 +69,7 @@ PROMPT_TEMPLATE = """
 9.  **你的回答必须是纯粹的、可以直接解析的 JSON 文本**。绝对不要包含任何解释、说明文字、或者 Markdown 的 ```json ``` 标记。
 """
 
-# ... (后续所有代码与之前版本完全相同，无需改动) ...
-# --- 数据清洗与计算函数 (无变化) ---
+# --- 数据清洗与计算函数 ---
 def clean_and_convert_to_numeric(value):
     if value is None or (isinstance(value, str) and value.strip() == ""):
         return np.nan
@@ -83,6 +83,7 @@ def clean_and_convert_to_numeric(value):
             return np.nan
     return np.nan
 
+# ✅ [V4.9 核心修改] 调整列顺序，并将计算逻辑整合
 def recalculate_dataframe(df):
     df_copy = df.copy()
     expected_cols = ["品名", "分类", "识别数量", "识别单价", "识别总价"]
@@ -102,7 +103,8 @@ def recalculate_dataframe(df):
     df_copy['[按总价]推算数量'] = np.where(df_copy['单价_num'] != 0, (df_copy['总价_num'] / df_copy['单价_num']).round(2), np.nan)
     df_copy['[按总价]推算单价'] = np.where(df_copy['数量_num'] != 0, (df_copy['总价_num'] / df_copy['数量_num']).round(2), np.nan)
 
-    final_cols = ["品名", "分类", "识别数量", "识别单价", "识别总价", "计算总价", "[按总价]推算数量", "[按总价]推算单价", "状态"]
+    # 将'状态'列移动到第一位
+    final_cols = ["状态", "品名", "分类", "识别数量", "识别单价", "识别总价", "计算总价", "[按总价]推算数量", "[按总价]推算单价"]
     for col in final_cols:
         if col not in df_copy.columns:
             df_copy[col] = np.nan
@@ -180,8 +182,8 @@ if st.session_state.file_list:
             st.info("所有图片均已处理。请在下方查看、编辑和导出结果。")
 
 
-# --- 结果展示、编辑与动态计算 (无变化) ---
-st.header("STEP 3: 对照图片，编辑结果（编辑后自动重算）")
+# --- 结果展示、编辑与动态计算 (列顺序已自动更新) ---
+st.header("STEP 3: 对照图片，编辑结果（验算结果在首列）")
 if not st.session_state.results:
     st.info("尚未处理任何图片。请先上传并开始处理。")
 else:
@@ -203,46 +205,59 @@ else:
                     key=f"editor_{file.file_id}",
                     num_rows="dynamic",
                     use_container_width=True,
-                    disabled=["计算总价", "[按总价]推算数量", "[按总价]推算单价", "状态"]
+                    disabled=["状态", "计算总价", "[按总价]推算数量", "[按总价]推算单价"]
                 )
 
                 recalculated_edited_df = recalculate_dataframe(edited_df)
-                
                 st.session_state.results[file.file_id] = recalculated_edited_df
 
-# --- 汇总预览与导出 (无变化) ---
+# --- ✅ [V4.9 核心修改] 汇总预览与导出 (增加空行过滤) ---
 st.markdown("---")
 st.header("STEP 4: 预览汇总结果并导出")
 
-all_dfs = [df for df in st.session_state.results.values() if isinstance(df, pd.DataFrame) and '识别数量' in df.columns]
+all_dfs = [df for df in st.session_state.results.values() if isinstance(df, pd.DataFrame)]
 
 if all_dfs:
-    st.subheader("统一结果预览区 (根据您的修改实时更新)")
-    
-    merged_df = pd.concat(all_dfs, ignore_index=True)
-    
-    display_cols = ["品名", "分类", "识别数量", "识别单价", "识别总价", "计算总价", "状态"]
-    display_df = merged_df[[col for col in display_cols if col in merged_df.columns]]
-    
-    st.dataframe(display_df, use_container_width=True, height=300)
-    
-    st.subheader("导出为 Excel 文件")
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        merged_df.to_excel(writer, index=False, sheet_name='诊断结果')
-        worksheet = writer.sheets['诊断结果']
-        for i, col in enumerate(merged_df.columns):
-            column_len = max(merged_df[col].astype(str).map(len).max(), len(col)) + 2
-            worksheet.set_column(i, i, column_len)
+    # 增加空行过滤逻辑
+    cleaned_dfs = []
+    for df in all_dfs:
+        if not df.empty and '品名' in df.columns:
+            # 只保留'品名'列不为空字符串的行
+            cleaned_dfs.append(df[df['品名'].astype(str).str.strip() != ''])
 
-    excel_data = output.getvalue()
-    now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    file_name = f"订单诊断结果_{now}.xlsx"
-    
-    st.download_button(
-        label="✅ 点击下载【包含完整分析列】的Excel",
-        data=excel_data,
-        file_name=file_name,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
+    if cleaned_dfs:
+        st.subheader("统一结果预览区 (已自动过滤空行)")
+        
+        merged_df = pd.concat(cleaned_dfs, ignore_index=True)
+        
+        # 调整预览列的顺序，并移除推算列
+        display_cols = ["状态", "品名", "分类", "识别数量", "识别单价", "识别总价", "计算总价"]
+        display_df = merged_df[[col for col in display_cols if col in merged_df.columns]]
+        
+        st.dataframe(display_df, use_container_width=True, height=300)
+        
+        st.subheader("导出为 Excel 文件")
+        output = io.BytesIO()
+        # 导出时，我们依然使用包含所有列的 merged_df
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            merged_df.to_excel(writer, index=False, sheet_name='诊断结果')
+            worksheet = writer.sheets['诊断结果']
+            for i, col in enumerate(merged_df.columns):
+                column_len = max(merged_df[col].astype(str).map(len).max(), len(col)) + 2
+                worksheet.set_column(i, i, column_len)
+
+        excel_data = output.getvalue()
+        now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_name = f"订单诊断结果_{now}.xlsx"
+        
+        st.download_button(
+            label="✅ 点击下载【最终修正后】的Excel",
+            data=excel_data,
+            file_name=file_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+    else:
+        st.info("所有处理结果均为空或无效，无法生成汇总表。")
+else:
+    st.info("尚未有任何有效处理结果。")
