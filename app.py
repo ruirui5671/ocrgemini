@@ -42,17 +42,15 @@ SAFETY_SETTINGS = [
 try:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     
-    # 路径 B: 追求速度、稳定与性价比的平衡
-    model_name = "gemini-1.5-flash-latest"
-    model = genai.GenerativeModel(model_name, safety_settings=SAFETY_SETTINGS)
+    # 切换到为速度优化的 Gemini 1.5 Flash 模型
+    model = genai.GenerativeModel("gemini-1.5-flash-latest", safety_settings=SAFETY_SETTINGS)
     
 except Exception as e:
-    st.error(f"模型 '{model_name}' 初始化失败: {e}")
-    st.info("请检查您的API密钥和网络连接。")
+    st.error(f"模型初始化失败: {e}")
     st.stop()
 
 
-# --- Prompt (保持不变, 对Flash模型同样有效) ---
+# --- Prompt (保持不变) ---
 PROMPT_TEMPLATE = """
 你是一个顶级的、非常严谨的餐饮行业订单数据录入专家。订单内容主要是餐厅后厨采购的食材。
 请仔细识别这张手写订单图片，并提取每一行商品的'品名'、'数量'、'单价'和'总价'，并对商品进行分类。
@@ -70,6 +68,7 @@ PROMPT_TEMPLATE = """
 9.  **你的回答必须是纯粹的、可以直接解析的 JSON 文本**。绝对不要包含任何解释、说明文字、或者 Markdown 的 ```json ``` 标记。
 """
 
+# ... (后续所有代码与之前版本完全相同，无需改动) ...
 # --- 数据清洗与计算函数 (无变化) ---
 def clean_and_convert_to_numeric(value):
     if value is None or (isinstance(value, str) and value.strip() == ""):
